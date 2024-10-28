@@ -8,437 +8,362 @@
 #include "TMath.h"
 #include "TString.h"
 #include "TChain.h"
+#include "TEfficiency.h"
 #include <iostream>
 #include <fstream>
 #include <vector>
 #include <algorithm>
 #include <string>
 #include <map>
+#include <numeric>
 
 #include "DataFormats/HeavyIonEvent/interface/CentralityBins.h"
 
-TDatime* date = new TDatime();
-using namespace std;
-
-bool descend(float i,float j) { return (i>j); }
-
-double dEffErrF(double* x, double* par) // Use "err"
+void makeDataCentralityTable_NOMINAL(
+				     // const TString input_file = "run374354_PhysicsHIPhysicsRawPrime0.txt",
+				     //const char* HLT_trg = "HLT_HIMinimumBiasHF1AND_v2",
+				     
+				     //const TString input_file = "run374719_HIPhysicsRawPrime0.txt",
+				     //const char* HLT_trg = "HLT_HIMinimumBiasHF1ANDZDC2nOR_v3",
+				     const TString input_file = "Run374810_new.txt",
+				     //const TString input_file = "RawPrime0_run374925.txt",
+				     const char* HLT_trg = "HLT_HIMinimumBiasHF1ANDZDC1nOR_v1",
+				     
+				     const int RUN = 374810,
+				     const char*RawPrime = "RawPrime0", 
+				     
+				     const char* CoinFilter = "pphfCoincFilter2Th4",
+				     const double threshold = 100.0,
+				     const char* label = "Nominal", 
+                                     const size_t nbins = 200
+				     )
 {
-  // Error function
+  // Constant parameters
+  const auto mcXscale = 0.855;
+  const auto threshold_Min = 1000.0;
+  const auto thresholdMax = 4000.0;
+
+  //Tag
+  const char* testMessage = Form("run%d_HIPhysics%s",RUN, RawPrime);
+  const char* tag = Form("CentralityTable_HFtowers200_DataPbPb_periHYDJETshape_run3v1302x04_offline_%s", label) ;
+  const std::string outputTag = Form("2023Run_HYDMC_xSF%0.2f_%s_Threshold%.0f_%s_Normalisation%.0f_%.0f_%s", mcXscale, CoinFilter, threshold, label, threshold_Min, thresholdMax, testMessage);
+
   
-  return 0.5*(1+TMath::Erf((x[0]-par[0])/(TMath::Sqrt(x[0])*par[1])));
-}
+  // Process data
+  TString Str;
+  ifstream fpr(Form("%s",input_file.Data()), ios::in);
+  if(!fpr.is_open()){
+    cout << "List of input files not found!" << endl;
+    return;
+  }
 
-double dEffErrFPW(double* x, double* par) // Use "errPW"
-{
-  // Piecewise function changing at par[0]
-  // Note that in this function par[2] and par[3] must be correlated in this way: par[3] = par[2]/par[0], to ensure the continuity
+  std::vector<TString> file_name_vector;
+  string file_chain;
+  while(getline(fpr, file_chain))
+    {
+      file_name_vector.push_back(file_chain);
+    }
+
+  TChain *t = new TChain("hiEvtAnalyzer/HiTree");
+  TChain *tskimanalysis = new TChain("skimanalysis/HltTree");
+  TChain *thltanalysis = new TChain("hltanalysis/HltTree");
   
-  if (x[0] <= par[0]) return 0.5*(1+TMath::Erf((x[0]-par[1])/par[2]));
-  else return 0.5*(1+TMath::Erf((x[0]-par[1])/(par[3]*x[0])));
-}
-
-double dEffStepF(double* x, double* par) // Use "step"
-{
-  // Step function changing to 1
-  // par[0] is the efficiency for x <= par[0]
-  
-  if (x[0] <= par[0]) return par[1];
-  else return 1.0;
-}
-
-TF1* fEffStepF = new TF1("hfEfficiency",dEffStepF,0.,5000.,2);
-TF1* fEffErrF = new TF1("hfEfficiency",dEffErrF,0.,5000.,2);
-TF1* fEffErrFPW = new TF1("hfEfficiency",dEffErrFPW,0.,5000.,3);
-
-const std::map< std::string , TF1* > effFfunc = {
-  {"step",fEffStepF},
-  {"err",fEffErrF},
-  {"errPW",fEffErrFPW}
-};
-
-const std::map< std::string , std::vector<double> > effFpars = {
-  {"step",{25.0,0.877}},
-  {"err",{13.439,0.811}},
-  //{"errPW",{11.36,13.5298,2.9839,0.2626}}
-  {"errPW",{25.0,22.6610,8.0034,0.3201}} //for hiHF
-  //{"errPW",{25.0,14.4182,7.6966,0.3079}} //for hiHFECut
-};
-
-const std::map< std::string , std::string > effFstring = {
-  {"step","if (x <= par[0]) eff = par[1] ; else eff= 1.0"},
-  {"err","eff = 0.5*(1+TMath::Erf((x-par[0])/(TMath::Sqrt(x)*par[1])))"},
-  {"errPW","if (x <= par[0]) eff = 0.5*(1+TMath::Erf((x-par[1])/par[2])) ; else eff = 0.5*(1+TMath::Erf((x-par[1])/(par[3]*x)))"}
-};
-
-void makeDataCentralityTable_NOMINAL(int nbins = 200, const string label = "hiHF",
-                             const char * tag = "CentralityTable_HFtowers200_DataPbPb_periHYDJETshape_run3v1205x02_offline",
-                             bool useEffFunc = false, const char* effName = "errPW", bool useMC = true, double intEff = -1., 
-			     bool geomInfo = false){
-
-  if (useEffFunc && useMC) { cout <<"[ERROR] can't use both eff function and MC methods"; return; }
-  
-  TH1D::SetDefaultSumw2();
-
-  const char* outputTag = "v1_TestRun_xSF0p86_ySFwithAllFilter_ThE4GeV_officiaMC2022__Threshold100__NOMINAL__Normalisation100_5000__GT_Aug10_NEW";
-  TFile *outFile = new TFile(Form("CentralityTable_HFtowers200_DataPbPb_usingMC_d%d_%s.root",date->GetDate(),outputTag),"recreate");
-
- 
-  //TString inFileName = "/eos/cms/store/group/phys_heavyions/nsaha/GO2023/HiForest_TestRun_data/HITestRaw/HiForestAODZB_TestRun_Data_ZB9_merged.root";
-  TString inFileName = "/eos/cms/store/group/phys_heavyions/nsaha/GO2023/HiForest_TestRun_data_originalGT/HITestRaw1/HiForest_TestRun_data_ZB1_GT/230809_194339/0000/HiForestAODZB_TestRun_Data_ZB1_merged_small.root";
-  //TString inFileName = "/eos/cms/store/group/phys_heavyions/nsaha/GO2023/HiForest_TestRun_data/HITestRaw/HiForestAODZB_TestRun_Data_ZB1_merged_small.root";
-
-  TFile *inFile = TFile::Open(inFileName);
-  TTree *t = (TTree*)inFile->Get("hiEvtAnalyzer/HiTree");
-  TTree * tskimanalysis = (TTree*)inFile->Get("skimanalysis/HltTree");
-  TTree * thltanalysis = (TTree*)inFile->Get("hltanalysis/HltTree");
+  for (std::vector<TString>::iterator listIterator = file_name_vector.begin(); listIterator != file_name_vector.end(); listIterator++)
+    {
+      TFile *file = TFile::Open(*listIterator);
+      cout << "Adding file:--- " << *listIterator << "--- to the chains" << endl;
+      t->Add(*listIterator);
+      tskimanalysis->Add(*listIterator);
+      thltanalysis->Add(*listIterator);
+    }
 
   t->AddFriend(tskimanalysis);
   t->AddFriend(thltanalysis);
+
+
+
+
   
-  
-  ofstream txtfile(Form("output_DataPbPb_%s_d%d_%s_%s.txt", useEffFunc?effName:(useMC?"usingMC":"intEff"),date->GetDate(), label.data(),outputTag));
-  txtfile << "Input tree: " << inFileName << endl;
-  txtfile << "Tag name: " << tag << endl;
-  
-  TDirectory *dir = outFile->mkdir(tag);
-  dir->cd();
+  TFile *outFile = new TFile(Form("CentralityTable_HFtowers200_DataPbPb_usingMC_%s.root", outputTag.c_str()),"recreate");
   TNtuple * nt = new TNtuple("nt","","value");
-  TH1F* hfData = new TH1F("hfData","hf data", 100,0, 6000);
-  TH1F* hfMc = new TH1F("hfMc","hf mc", 100,0, 6000);
-  TH1F* hfCombined = new TH1F("hfCombined","hf mc", 100,0, 6000);
+  //TNtuple nt("nt","","value");
+  TH1F*hfData1 = new TH1F("hfData1",Form("hf data run == %d",RUN), 100,0, 10000);
+  TH1F*hfData2 = new TH1F("hfData2",Form("hf data run != %d",RUN), 100,0, 10000);
+  TH1F*hfMc1 = new TH1F("hfMc1","hf mc", 100, 0, 10000);
+  TH1F*hfMc2 = new TH1F("hfMc2","hf mc", 100, 0, 10000);
+  TH1F* hfCombined = new TH1F("hfCombined","hf_combined", 100,0, 10000);
+  TEfficiency*dataEff1 = new TEfficiency("dataEff1", "dataEff1", 1000, 0, 1000);
+  TEfficiency*dataEff2 = new TEfficiency("dataEff2", "dataEff2", 1000, 0, 1000);
+  TEfficiency*mcEff= new TEfficiency("mcEff", "mcEff", 1000, 0, 1000);
+
 
   const int runNum = 1;
-  CentralityBins * bins = new CentralityBins(Form("run%d",runNum), tag, nbins);
+  CentralityBins*bins = new CentralityBins(Form("run%d",runNum), tag, nbins);
+  //CentralityBins * bins = new CentralityBins();
   bins->table_.reserve(nbins);
-  
-  // Determine the binning to be used from input
-  bool binHF = label.compare("hiHF") == 0;
-  bool binNtrks = label.compare("hiNtracks") == 0;
-  
-  // Deffine efficiency to weight events
-  TF1* fEff(0x0);
-  TParameter<double>* gEff(0x0);
-  double effPrime = -1;
-  if (useEffFunc)
-  {
-    fEff = effFfunc.at(effName);
-    if (!fEff)
-    {
-      cout << "[ERROR] No efficiency function could be defined " << endl;
-      return;
-    }
-    else cout << "[INFO] Using efficiency function ..." << endl;
 
-    int parS = effFpars.at(effName).size();
-    for (int i = 0 ; i < parS ; i++)
-    {
-      fEff->FixParameter(i,effFpars.at(effName).at(i));
-    }
-    
-    if (!strcmp(effName,"step"))
-    {
-      cout << "Computing average efficiency for step function" << endl;
-      
-      const char* selection = "pprimaryVertexFilter && pclusterCompatibilityFilter && phfCoincFilter2Th4";
-      
-      double ntot = (1./effFpars.at("step").at(1))*t->GetEntries(selection);
-      double nlow = t->GetEntries(Form("%s && %s<=%f",selection,label.data(),effFpars.at("step").at(0)));
-      double nhigh = t->GetEntries(Form("%s && %s>%f",selection,label.data(),effFpars.at("step").at(0)));
-      effPrime = nlow / (ntot - nhigh);
-      
-      cout << "Average efficiency for  x <= " << effFpars.at("step").at(0) << " = " << effPrime << endl;
-      
-      fEff->FixParameter(1,effPrime);
-    }
-  }
-  else if (!useMC)
-  {
-    if (intEff>0 && intEff<=1) gEff = new TParameter<double>("eff",intEff);
-    else
-    {
-      cout << "[ERROR] Input integrated efficiency is not correct, must be (0,1]" << fEff << endl;
-      return;
-    }
-    cout << "Using global efficiency of " << gEff->GetVal() << endl;
-  }
-  
-  
-  //Here we need the default Glauber for 2.76 or 5 TeV
-  //TFile * inputMCfile = TFile::Open("/eos/cms/store/group/phys_heavyions/nsaha/GO2023/HiForest_HYDJET_official/MinBias_Drum5F_5p36TeV_hydjet/HiForest_TestRun2022_MC_official/230803_133309/0000/HiForestMiniAOD_OfficialMC_Hyd2022_merged.root");
 
-  TFile * inputMCfile = TFile::Open("/eos/cms/store/group/phys_heavyions/nsaha/GO2023/HiForest_HYDJET_official_modifiedGT/MinBias_Drum5F_5p36TeV_hydjet/HiForest_TestRun2022_MC_official_GT/230809_191838/0000/HiForestMiniAOD_OfficialMC_Hyd2022_merged.root");
-
-  TChain * tmc = new TChain("hiEvtAnalyzer/HiTree","");
-  TChain * tskimanalysismc = new TChain("skimanalysis/HltTree","");
-  TChain * thltanalysismc = new TChain("hltanalysis/HltTree","");
-
-  tmc->Add(inputMCfile->GetName());
-  tskimanalysismc->Add(inputMCfile->GetName());
-  thltanalysismc->Add(inputMCfile->GetName());
-
-  tmc->AddFriend(tskimanalysismc);
-  tmc->AddFriend(thltanalysismc);
-  
-  double binboundaries[nbins+1];
-  vector<float> values;
 
   UInt_t run;
-  float hf, hfecut, hfplus, hfpluseta4, hfminuseta4, hfminus, hfhit, ee, eb, zdc, zdcplus, zdcminus;
-  int lumi, npix, npixtrks, ntrks ,pprimaryVertexFilter, pclusterCompatibilityFilter, phfCoincFilter2Th4, pclusterfilter, pvfilter, HLT_HIMinimumBias_v2, numMinHFTower4, numMinHFTower5;
-  t->SetBranchAddress("run",    &run);
-  //t->SetBranchAddress("lumi",   &lumi);
-  t->SetBranchAddress("hiHF",           &hf);
-  
-  t->SetBranchAddress("HLT_HIMinimumBias_v2", &HLT_HIMinimumBias_v2);
-  t->SetBranchAddress("pprimaryVertexFilterHI", &pvfilter);
-  t->SetBranchAddress("pclusterCompatibilityFilter", &pclusterfilter);
-  t->SetBranchAddress("numMinHFTower4",&numMinHFTower4);
-  //t->SetBranchAddress("numMinHFTower5",&numMinHFTower5);
+  t->SetBranchAddress("run", &run);
+  std::map<std::string, int> varI, mcVarI;
+  //const char* numMinHFTowerLbl = Form("pphfCoincFilter2Th%d", hfCoinThr);
+  for (const auto& p : {HLT_trg, "pprimaryVertexFilter", "pclusterCompatibilityFilter", CoinFilter, "hiBin"})
+    t->SetBranchAddress(p, &(varI[p]));
+  std::map<std::string, float> varF, mcVarF;
+  for (const auto& p : {"hiHF", "vz"})
+    t->SetBranchAddress(p, &(varF[p]));
+  t->SetBranchStatus("*", 0);
+  for (const auto& p : {"run", "hiHF", HLT_trg, "pprimaryVertexFilter", "pclusterCompatibilityFilter", CoinFilter, "vz", "hiBin"})
+    t->SetBranchStatus(p, 1);
 
   
+  std::vector<std::pair<float, bool>> values, hfdata;
+  std::vector<std::pair<int, bool>> hibin;
+  TH1D::SetDefaultSumw2();
 
-  float hf_mc, hfecut_mc;
-  int ntrks_mc ,pprimaryVertexFilter_mc, pclusterCompatibilityFilter_mc, phfCoincFilter2Th4_mc, numMinHFTower4_mc, numMinHFTower5_mc, HLT_HIMinimumBias_v2_mc;
-  tmc->SetBranchAddress("hiHF", &hf_mc);
-  tmc->SetBranchAddress("HLT_HIMinimumBias_v2", &HLT_HIMinimumBias_v2_mc);
-  tmc->SetBranchAddress("pprimaryVertexFilter", &pprimaryVertexFilter_mc);
-  tmc->SetBranchAddress("pclusterCompatibilityFilter", &pclusterCompatibilityFilter_mc);
-  tmc->SetBranchAddress("numMinHFTower4",&numMinHFTower4_mc);
-  //tmc->SetBranchAddress("numMinHFTower5",&numMinHFTower5_mc);
+  std::array<std::array<size_t, 500>, 4> numMinHFTowerV{};
 
-  unsigned int Nevents = t->GetEntries();
-  //  std::cout<<"Selected Nevents ="<<Nevents<<std::endl;
+  auto Nevents = t->GetEntries();
+  double mcYscale_data(0);
 
-  double threshold = 0.0;
-  double threshold_norm = 0.0;
-  double thresholdMax = 999999.0;
-  if (useMC) { threshold = 100.0; threshold_norm = 1000; thresholdMax = 5000;}
-  double mcXscale = 0.86;
-  double mcYscale = 1;
-  if (useMC)
-    mcYscale = 1.0*t->GetEntries(Form("hiHF>%f && hiHF<%f && run <= 362320 && HLT_HIMinimumBias_v2 ==1 && pprimaryVertexFilterHI ==1 && pclusterCompatibilityFilter ==1 && numMinHFTower4 >=2", threshold_norm, thresholdMax))/tmc->GetEntries(Form("hiHF>%f && hiHF<%f && HLT_HIMinimumBias_v2 ==1 && pprimaryVertexFilter ==1 && pclusterCompatibilityFilter ==1 && numMinHFTower4 >=2", threshold_norm/mcXscale, thresholdMax/mcXscale));
-
-    //if (useMC)
-    //mcYscale = 1.0*data_entries/tmc->GetEntries(Form("hiHF>%f && hiHF<%f", threshold/mcXscale, thresholdMax/mcXscale));
-  
-  cout<<"[INFO] mcYscale = "<< mcYscale <<endl;
-  double totalXsec(0);
-  double totalXsec_data(0);
-  double totalXsec_mc(0);
-  int passed(0);
-  for(unsigned int iev = 0; iev < Nevents; iev++) {
+  std::cout<<"Total Number of events = "<<Nevents<<std::endl;
+ 
+  for(Long64_t iev = 0; iev < Nevents; iev++) {
     
-    if(iev%1000000 == 0) cout<<"Processing data event: " << iev << " / " << Nevents << endl;
+    if(iev%100000 == 0) cout<<"Processing data event: " << iev << " / " << Nevents << endl;
+
     t->GetEntry(iev);
+
     
-    if (run <= 362320 && HLT_HIMinimumBias_v2 ==1 && pvfilter ==1 && pclusterfilter ==1 && numMinHFTower4 >=2 )
-    {
-      float parameter = -1;
-      if(binHF) parameter = hf;
-      //if(binHFECut) parameter = hfecut;
-      //if(binNtrks) parameter = ntrks;
+    const auto& parameter = varF.at("hiHF");
+    const auto& numMinHFTower = varI.at(CoinFilter);
+
     
-	hfData->Fill(parameter);
-      if (parameter > threshold) {
-	passed++;
-	values.push_back(parameter);
-	nt->Fill(parameter);
-	hfCombined->Fill(parameter, 1.0);
+    //const bool pass = (varI.at("HLT_HIMinimumBiasHF1AND_v1")>0 ); //with only HLT trigger!!
+    const bool pass = (varI.at(HLT_trg)>0 && varI.at("pprimaryVertexFilter")>0 && varI.at("pclusterCompatibilityFilter")>0 && varI.at(CoinFilter)>0);
+  
+    //std::cout<<"***************"<<std::endl;    
+    //To check with only HLT_HIZeroBias_v4
+    //const bool pass = (varI.at("HLT_HIZeroBias_v4")>0 && varI.at("pprimaryVertexFilter")>0 && varI.at("pclusterCompatibilityFilter")>0 && numMinHFTower>=hfCoinN);
+
+
+
+
+    if (pass) {
+      hfdata.push_back({parameter, (run == RUN)});
+      hibin.push_back({varI.at("hiBin"), (run == RUN)});
+      if (run == RUN) {
+        hfData1->Fill(parameter);
+        if (parameter > threshold)
+          values.push_back({parameter, false});
+        if (parameter>threshold_Min && parameter<thresholdMax)
+          mcYscale_data += 1;
       }
-      if (useEffFunc)
-	{
-	  double eff = fEff->Eval(parameter);
-	  //cout << "eff(" << parameter << ") = " << eff << endl;
-	  if (eff <= 1 && eff > 0.) totalXsec_data += 1./eff;
-	  else totalXsec_data += 1.;
-	} else if (parameter > threshold){
-	totalXsec_data+=1.;
-      }
+      else if (run != RUN)
+        hfData2->Fill(parameter);
     }
+    if (varI.at(HLT_trg)>0 && varI.at("pprimaryVertexFilter")>0 && varI.at("pclusterCompatibilityFilter")>0) {
+
+      //To check with only HLT_HIZeroBias_v4
+      //if (varI.at("HLT_HIZeroBias_v4")>0 && varI.at("pprimaryVertexFilter")>0 && varI.at("pclusterCompatibilityFilter")>0) {
+      //const bool passTight = (pass && varI.at(numMinHFTowerLbl)>=(hfCoinN+1));
+      ((run == RUN) ? dataEff1 : dataEff2)->Fill(pass, parameter);
+    }
+
+    if (varI.at(HLT_trg)>0 && varI.at("pprimaryVertexFilter")>0 && varI.at("pclusterCompatibilityFilter")>0) {
+
+    //if (varI.at("HLT_HIZeroBias_v4")>0 && varI.at("pprimaryVertexFilter")>0 && varI.at("pclusterCompatibilityFilter")>0) {
+      size_t idx = (parameter > 1000.)*2 + (run == RUN);
+      if ((parameter > 1000.) || (parameter < 140.))//(parameter > 25. && parameter < 60.))//(parameter > 60. && parameter < 140.))
+        numMinHFTowerV[idx][numMinHFTower] += 1;
+    }
+
   } //data events loop
-  
-  if (!useEffFunc && !useMC)
-    totalXsec_data = totalXsec_data/(gEff->GetVal());
-  
-  if (useMC){
-    Nevents = tmc->GetEntries();
-    //Nevents = 20000;
-    for(unsigned int iev = 0; iev < Nevents; iev++) {
-      
-      if(iev%5000 == 0) cout<<"Processing mc event: " << iev << " / " << Nevents << endl;
-      tmc->GetEntry(iev);
+  //inFile.Close();
 
-      if (HLT_HIMinimumBias_v2_mc ==1 && pprimaryVertexFilter_mc ==1 && pclusterCompatibilityFilter_mc ==1 && numMinHFTower4_mc >=2 )
-      {
-	  float parameter = -1;
-	  if(binHF) parameter = hf_mc*mcXscale;
-	  //if(binHFECut) parameter = hfecut_mc*mcXscale;
-	  //if(binNtrks) parameter = ntrks_mc*mcXscale;
-	  
-	  hfMc->Fill(parameter, mcYscale);
-	  
-	  if (parameter <= threshold){
-	    passed++;
-	    values.push_back(parameter);
-	    nt->Fill(parameter, mcYscale);
-	    hfCombined->Fill(parameter, mcYscale);
-	    totalXsec_mc+=1.;
-	  }
-      }
-    } //end of mc loop
-  } //end of if mc
-  
-  totalXsec_mc = totalXsec_mc*mcYscale;
-  totalXsec = totalXsec_data + totalXsec_mc;
+  // Compute noise study
+  TH1F*hfNoise1 = new TH1F("hfNoise1",Form("hf noise data run == %d",RUN), 60, 0, 60);
+  TH1F*hfNoise2 = new TH1F("hfNoise2",Form("hf noise data run != %d",RUN), 60, 0, 60);
+  std::array<std::array<double, 200>, 4> nEvt{};
+  for (size_t i=0; i<101; i++)
+    for (size_t j=0; j<4; j++)
+      nEvt[j][i] = std::accumulate(numMinHFTowerV[j].begin()+i, numMinHFTowerV[j].end(), 0);
+  for (size_t i=0; i<60; i++) {
+    hfNoise1->SetBinContent(i+1, (nEvt[0][i] / nEvt[1][i])*(nEvt[3][i] / nEvt[2][i]));
+    hfNoise2->SetBinContent(i+1, nEvt[1][i] / nEvt[1][20]);
+  }
 
-  cout << endl;
-  cout << "Selected events = " << passed << endl;
-  cout << "Selected weighed events = " << totalXsec << endl;
-  if (useMC)
-    cout << "Total efficiency = " << (double) 1.0*hfData->Integral()/hfCombined->Integral() << endl;
-  else 
-    cout << "Total efficiency = " << (double)(passed/totalXsec) << endl;
+  // Process MC
+
+  //official MC with TowerMaker
+  TFile inputMCfile("/eos/cms/store/group/phys_heavyions/nsaha/GO2023/2023PbPbRun3/forest_Run3_HYD_official_23032024/MinBias_Drum5F_5p36TeV_hydjet/HiForest_Run3_HYD_official_23032024/240323_071705/0000/HYD_official_GT132X_mcRun3_2023_realistic_HI_v9_out_combined.root", "READ");
+
+
+  if (!inputMCfile.IsOpen()) throw std::logic_error("MC file was not found!");
+  const auto& tmc = inputMCfile.Get<TTree>("hiEvtAnalyzer/HiTree");
+  const auto& tskimanalysismc = inputMCfile.Get<TTree>("skimanalysis/HltTree");
+  const auto& thltanalysismc = inputMCfile.Get<TTree>("hltanalysis/HltTree");
+  tmc->AddFriend(tskimanalysismc);
+  tmc->AddFriend(thltanalysismc);
+
+  for (const auto& p : { "pprimaryVertexFilter", "pclusterCompatibilityFilter", CoinFilter})
+    tmc->SetBranchAddress(p, &(mcVarI[p]));
+  for (const auto& p : {"hiHF", "vz"})
+    tmc->SetBranchAddress(p, &(mcVarF[p]));
+  tmc->SetBranchStatus("*", 0);
+  for (const auto& p : {"hiHF", "pprimaryVertexFilter", "pclusterCompatibilityFilter", CoinFilter, "vz"})
+    tmc->SetBranchStatus(p, 1);
+
   
-  sort(values.begin(),values.end());
-  
-  txtfile << "Number of events = " << passed << endl;
-  txtfile << "Number of weighted events = " << totalXsec << endl;
-  if (useMC)
-    txtfile << "Total efficiency = " << (double) 1.0*hfData->Integral()/hfCombined->Integral()<< endl;
-  else
-    txtfile << "Total efficiency = " << (double)(passed/totalXsec) << endl;
-  txtfile << endl;
-  txtfile << "-------------------------------------" << endl;
-  if (useEffFunc)
-  {
-    txtfile << "EFficiency shape is " << effName << " :" << endl;
-    txtfile << effFstring.at(effName) << endl;
-    txtfile << "with pars : " << endl;
-    for (int i = 0 ; i < effFpars.at(effName).size() ; i++)
-    {
-      txtfile << Form("par[%d] = %f",i,fEff->GetParameter(i)) << endl;
+
+  Nevents = tmc->GetEntries();
+  double mcYscale_mc(0);
+  for(Long64_t iev = 0; iev < Nevents; iev++) {
+    if(iev%5000 == 0) cout<<"Processing mc event: " << iev << " / " << Nevents << endl;
+    tmc->GetEntry(iev);
+    const auto parameter = mcVarF.at("hiHF") * mcXscale;
+
+    const bool pass = (mcVarI.at("pprimaryVertexFilter")>0 && mcVarI.at("pclusterCompatibilityFilter")>0 && mcVarI.at(CoinFilter)>0);
+
+
+    if (pass) {
+      hfMc1->Fill(parameter);
+      if (parameter>threshold_Min && parameter<thresholdMax)
+        mcYscale_mc += 1;
     }
-    
-    if (effPrime>0) txtfile << "Average efficiency for  x <= " << effFpars.at("step").at(0) << " = " << effPrime << endl;
+    if (parameter <= threshold)
+      values.push_back({parameter, true});
+    hfMc2->Fill(parameter);
+    mcEff->Fill(pass, parameter);
+  } //end of mc loop
+  inputMCfile.Close();
+
+
+  
+  // Scale MC
+  const auto mcYscale = mcYscale_data / mcYscale_mc;
+  std::cout<<"[INFO] mcYscale = "<< mcYscale << std::endl;
+  hfMc1->Scale(mcYscale);
+  hfMc2->Scale(mcYscale);
+  for (const auto& v : values) {
+    nt->Fill(v.first, v.second ? mcYscale : 1.);
+    hfCombined->Fill(v.first, v.second ? mcYscale : 1.);
   }
-  if (useMC) { 
-    txtfile << "Using MC to correct for peripheral events. Threshold = " << threshold<<". mc X scale factor = "<< mcXscale<< endl;
-  }
-  txtfile << endl;
-  txtfile << "-------------------------------------" << endl;
-  txtfile << label.data() << " based cuts are: " << endl;
+  const auto totEff = hfData1->Integral() / hfCombined->Integral();
+
+
+  const auto passed = values.size();
+  double totalXsec(0);
+  for(const auto& v : values)
+    totalXsec += v.second ? mcYscale : 1.;
+
+  std::cout << std::endl;
+  std::cout << "Selected events = " << passed << std::endl;
+  std::cout << "Selected weighed events = " << totalXsec << std::endl;
+  std::cout << "Total efficiency = " << totEff << std::endl;
+
+  // Create text file
+
+  
+  ofstream txtfile(Form("output_DataPbPb_usingMC_hiHF_%s.txt", outputTag.c_str()));
+  //txtfile << "Input tree: " << inFileName << endl;
+  txtfile << "Tag name: " << tag << endl;
+  txtfile << "Number of events = " << passed << std::endl;
+  txtfile << "Number of weighted events = " << totalXsec << std::endl;
+  txtfile << "Total efficiency = " << totEff << std::endl;
+  txtfile << std::endl;
+  txtfile << "-------------------------------------" << std::endl;
+  txtfile << "Using MC to correct for peripheral events. Threshold = " << threshold<<". mc X scale factor = "<< mcXscale<< std::endl;
+  txtfile << std::endl;
+  txtfile << "-------------------------------------" << std::endl;
+  txtfile << "hiHF based cuts are: " << std::endl;
   txtfile << "(";
-  
-  unsigned int size = values.size();
-  binboundaries[nbins] = values[size-1];
-  cout << "Events per bin = " << totalXsec/(double)(nbins) << endl;
-  if (useEffFunc)
-  {
-    binboundaries[0] = 0.;
-    
-    double integral = 0;
-    int currentbin = 1;
-    for(unsigned int iev = 0; iev < size; iev++)
-    {
-      double val = values[iev];
-      double eff = fEff->Eval(val);
-      if (eff <= 1 && eff > 0.) integral += 1. / eff;
-      else integral += 1.;
-      
-      if(integral > ((double)(currentbin))*(totalXsec/(double)(nbins)))
-      {
-        cout << "current bin = " << currentbin << " ; integral = " << integral << " ; sum = " << ((double)(currentbin))*(totalXsec/(double)(nbins)) << endl;
-        binboundaries[currentbin] = val;
-        currentbin++;
-      }
-    }
-    cout << currentbin << endl;
-  }
-  else if (!useMC)// This way assumes all inefficiency is in the most peripheral bins
-  {
-    double EFF = gEff->GetVal();
-    for(int i = 0; i < nbins; i++) {
-      int entry = (int)( (float)(i)*((float)(size)/EFF/(float)(nbins)) - (float)(size)*(1. - EFF)/EFF );
-      if(entry < 0 || i == 0) binboundaries[i] = 0;
-      else binboundaries[i] = values[entry];
-      if(binboundaries[i] < 0) { binboundaries[i] = 0; cout << "*"; }
-    }
-  }
-  else {
-      binboundaries[0] = 0.;
 
-      double integral = 0;
-      int currentbin = 1;
-      for(unsigned int iev = 0; iev < size; iev++)
-	{
-	  double val = values[iev];
-	  if (val<=threshold) integral += 1.*mcYscale;
-	  else integral += 1.;
-
-	  if(integral > ((double)(currentbin))*(totalXsec/(double)(nbins)))
-	    {
-	      cout << "current bin = " << currentbin << " ; integral = " << integral << " ; sum = " << ((double)(currentbin))*(totalXsec/(double)(nbins)) << endl;
-	      binboundaries[currentbin] = val;
-	      currentbin++;
-	    }
+  // Store bin boundaries
+  const auto size = values.size();
+  std::sort(values.begin(), values.end());
+  std::vector<double> binboundaries(nbins+1);
+  binboundaries[0] = 0.;
+  binboundaries[nbins] = values[size-1].first;
+  std::cout << "Events per bin = " << totalXsec/nbins << std::endl;
+  double integral(0);
+  size_t currentbin(1);
+  for(const auto& v : values) {
+    const auto& val = v.first;
+    integral += v.second ? mcYscale : 1.;
+    const auto sum = currentbin*(totalXsec/nbins);
+	if(integral > sum) {
+	  //std::cout << "current bin = " << currentbin << " ; integral = " << integral << " ; sum = " << sum << std::endl;
+	  binboundaries[currentbin] = val >= 0 ? val : 0;
+	  currentbin++;
 	}
-      cout << currentbin << endl;
   }
-  for(int i = 0; i < nbins; i++) {
-    if(binboundaries[i] < 0) binboundaries[i] = 0;
+  std::cout << currentbin << std::endl;
+  for(size_t i = 0; i < nbins; i++)
     txtfile << binboundaries[i] << ", ";
-  }
-  txtfile << binboundaries[nbins] << ")" << endl;
-  txtfile << endl;
-  
+  txtfile << binboundaries[nbins] << ")" << std::endl;
+  txtfile << std::endl;
   txtfile<<"-------------------------------------"<<endl;
-  txtfile<<"# Bin NpartMean NpartSigma NcollMean NcollSigma bMean bSigma BinEdge"<<endl;
+
+  txtfile<<"# Bin BinEdge"<<endl;
   for(int i = 0; i < nbins; i++){
     int ii = nbins-i;
-    
-    //if (inputMCtable)
-    //{
-    //bins->table_[i].n_part_mean = inputMCtable->NpartMeanOfBin(i);
-    //bins->table_[i].n_part_var = inputMCtable->NpartSigmaOfBin(i);
-    //bins->table_[i].n_coll_mean = inputMCtable->NcollMeanOfBin(i);
-    //bins->table_[i].n_coll_var = inputMCtable->NcollSigmaOfBin(i);
-    //bins->table_[i].b_mean = inputMCtable->bMeanOfBin(i);
-    //bins->table_[i].b_var = inputMCtable->bSigmaOfBin(i);
-    //bins->table_[i].n_hard_mean = inputMCtable->NhardMeanOfBin(i);
-    //bins->table_[i].n_hard_var = inputMCtable->NhardSigmaOfBin(i);
-    //bins->table_[i].ecc2_mean  = inputMCtable->eccentricityMeanOfBin(i);
-    //bins->table_[i].ecc2_var = inputMCtable->eccentricitySigmaOfBin(i);
-    //}
-    //else
-    //{
-      bins->table_[i].n_part_mean = -99;
-      bins->table_[i].n_part_var = -99;
-      bins->table_[i].n_coll_mean = -99;
-      bins->table_[i].n_coll_var = -99;
-      bins->table_[i].b_mean = -99;
-      bins->table_[i].b_var = -99;
-      bins->table_[i].n_hard_mean = -99;
-      bins->table_[i].n_hard_var = -99;
-      bins->table_[i].ecc2_mean  = -99;
-      bins->table_[i].ecc2_var = -99;
-      //}
-    
-      bins->table_[i].bin_edge = binboundaries[ii-1];
-    
-    txtfile << i << " " << bins->table_[i].n_part_mean << " " << bins->table_[i].n_part_var << " " << bins->table_[i].n_coll_mean << " " << bins->table_[i].n_coll_var << " " <<bins->table_[i].b_mean << " " << bins->table_[i].b_var << " " << bins->table_[i].n_hard_mean << " " << bins->table_[i].n_hard_var << " " << bins->table_[i].bin_edge << " " << endl;
+    bins->table_[i].bin_edge = binboundaries[ii-1];
+
+    txtfile << i << " " << bins->table_[i].bin_edge << " " << endl;
   }
   txtfile << endl;
   txtfile<<"-------------------------------------"<<endl;
   
+  txtfile.close();
+
+
+  // Store histograms
+
+
   outFile->cd();
+  //const auto& dir = outFile.mkdir(tag.c_str());
+  TDirectory *dir = outFile->mkdir(tag);
   dir->cd();
   bins->Write();
   nt->Write();
-  hfData->Write();
-  hfMc->Write();
-  //  bins->Delete();
-  outFile->Write();
+  hfData1->Write();
+  hfData2->Write();
+  //c->Write();
+  hfMc1->Write();
+  hfMc2->Write();
+  mcEff->Write();
+  dataEff1->Write();
+  dataEff2->Write();
+  hfNoise1->Write();
+  hfNoise2->Write();
+  hfCombined->Write();
   outFile->Close();
-  txtfile.close();
+
+
+  
+  // Check bin boundaries
+  int newbin, oldbin;
+  TFile outf(Form("compare_centralitybins_%s.root", outputTag.c_str()),"recreate");
+  TTree t1(Form("anaCentrality_%d", RUN),"analysis level centrality");
+  TTree t2(Form("anaCentrality_not%d", RUN),"analysis level centrality");
+  for (auto& t : {&t1, &t2}) {
+    t->Branch("newBin",&newbin,"newBin/I");
+    t->Branch("oldBin",&oldbin,"oldBin/I");
+  }
+  for (size_t i=0; i<hfdata.size(); i++) {
+    newbin = 199;
+    for(size_t b = 0; b < 200; ++b){
+      if(hfdata[i].first >= binboundaries[199-b]){
+        newbin = b;
+        break;
+      }
+    }
+    oldbin = hibin[i].first;
+    (hfdata[i].second ? t1 : t2).Fill();
+  }
+  t1.Write();
+  t2.Write();
+  outf.Close();
 }
