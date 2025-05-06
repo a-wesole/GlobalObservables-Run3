@@ -16,4 +16,6 @@
 
 * Forest
 
-3. To make Data and MC forest for GO studies, follow: https://twiki.cern.ch/twiki/bin/viewauth/CMS/HiForest2023
+3. To make Data and MC forest for GO studies:
+   * List of data forest files: https://twiki.cern.ch/twiki/bin/viewauth/CMS/HiForest2023
+   * Instructions to produce: https://github.com/jusaviin/HiForestSetupPbPbRun2023
