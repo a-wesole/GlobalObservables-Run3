@@ -1,0 +1,5 @@
+/eos/cms/store/group/phys_heavyions/tsheng/Forest2024/PF2Th7_addition/HiForestMiniAOD_rawprime0_r387973_nomask_lumi61.root
+/eos/cms/store/group/phys_heavyions/tsheng/Forest2024/PF2Th7_addition/HiForestMiniAOD_rawprime0_r387973_nomask_lumi62.root
+/eos/cms/store/group/phys_heavyions/tsheng/Forest2024/PF2Th7_addition/HiForestMiniAOD_rawprime0_r387973_nomask_lumi63.root
+/eos/cms/store/group/phys_heavyions/tsheng/Forest2024/PF2Th7_addition/HiForestMiniAOD_rawprime0_r387973_nomask_lumi64.root
+/eos/cms/store/group/phys_heavyions/tsheng/Forest2024/PF2Th7_addition/HiForestMiniAOD_rawprime0_r387973_nomask_lumi65.root
