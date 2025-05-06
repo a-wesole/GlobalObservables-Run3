@@ -15,3 +15,5 @@ Run2 codes: https://github.com/CmsHI/CentralityRun2
 * GO validation
 
 * Forest
+
+To make Data and MC forest for GO studies, follow: https://twiki.cern.ch/twiki/bin/viewauth/CMS/HiForest2023
