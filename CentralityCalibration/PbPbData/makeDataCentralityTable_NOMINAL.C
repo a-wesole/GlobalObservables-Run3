@@ -1,3 +1,6 @@
+//this code for a single run 
+// how to run root macro.C 
+// need cmssw 
 #include "TFile.h"
 #include "TTree.h"
 #include "TNtuple.h"
@@ -26,14 +29,15 @@ void makeDataCentralityTable_NOMINAL(
 				     //const TString input_file = "run374719_HIPhysicsRawPrime0.txt",
 				     //const char* HLT_trg = "HLT_HIMinimumBiasHF1ANDZDC2nOR_v3",
 				     //const TString input_file = "forest_run387853_387854_387855.txt",
-				     const TString input_file = "forest_run387973_PF.txt",
+				     const TString input_file = "forest_run387973_PF.txt", //data files from the run
+                                                                           // take a run that other people are presenting 
 				     //const TString input_file = "RawPrime0_run374925.txt",
-				     const char* HLT_trg = "HLT_HIMinimumBiasHF1ANDZDC1nOR_v4",
+				     const char* HLT_trg = "HLT_HIMinimumBiasHF1ANDZDC1nOR_v4", //need to ask people 
 				     
-				     const int RUN = 387973, 
+				     const int RUN = 387973, // to match aboove 
 				     const char*RawPrime = "RawPrime0", 
 				     
-				     const char* CoinFilter = "pphfCoincFilterPF3Th5",
+				     const char* CoinFilter = "pphfCoincFilterPF3Th5", //comes from event selections, before calibration from isabela, just use this one at first 
 				     const double threshold = 100.0,
 				     const char* label = "Nominal", 
                                      const size_t nbins = 200
@@ -52,7 +56,7 @@ void makeDataCentralityTable_NOMINAL(
   const std::string outputTag = Form("2024Run_HYDMC_xSF%0.2f_%s_Threshold%.0f_%s_Normalisation%.0f_%.0f_%s", mcXscale, CoinFilter, threshold, label, threshold_Min, thresholdMax, testMessage);
 
   
-  // Process data
+  // Process data -- tchain 
   TString Str;
   ifstream fpr(Form("%s",input_file.Data()), ios::in);
   if(!fpr.is_open()){
@@ -109,7 +113,7 @@ void makeDataCentralityTable_NOMINAL(
   bins->table_.reserve(nbins);
 
 
-
+ //get the branches - modified by andre 
   UInt_t run;
   t->SetBranchAddress("run", &run);
   std::map<std::string, int> varI, mcVarI;
@@ -134,7 +138,7 @@ void makeDataCentralityTable_NOMINAL(
   double mcYscale_data(0);
 
   std::cout<<"Total Number of events = "<<Nevents<<std::endl;
- 
+ //event loop 
   for(Long64_t iev = 0; iev < Nevents; iev++) {
     
     if(iev%100000 == 0) cout<<"Processing data event: " << iev << " / " << Nevents << endl;
@@ -160,8 +164,9 @@ void makeDataCentralityTable_NOMINAL(
       hfdata.push_back({parameter, (run == RUN)});
       hibin.push_back({varI.at("hiBin"), (run == RUN)});
       if (run == RUN) {
-        hfData1->Fill(parameter);
-        if (parameter > threshold)
+        hfData1->Fill(parameter); //HiHf_pf
+        if (parameter > threshold) //there is no need to change threshold 
+                                   //threshold is where we have to take from MC instead of data bc in data many things could happen low HiHF is the most peropheral collisions
           values.push_back({parameter, false});
         if (parameter>threshold_Min && parameter<thresholdMax)
           mcYscale_data += 1;
@@ -249,7 +254,7 @@ void makeDataCentralityTable_NOMINAL(
 
   //TFile inputMCfile("/eos/cms/store/group/phys_heavyions/nsaha/GO2023/2023PbPbRun3/forest_Run3_HYD_official_23032024/MinBias_Drum5F_5p36TeV_hydjet/HiForest_Run3_HYD_official_23032024/240323_071705/0000/HYD_official_GT132X_mcRun3_2023_realistic_HI_v9_out_combined.root","READ");
  
-  TFile inputMCfile("/eos/cms/store/group/phys_heavyions/nsaha/GO2024/2024PbPbRun3/forest_2024Run3_HYD2024_PFcand_27112024/Hydjet2024_v2/HiForest_2024Run3_HYD2024_new_PFcand_27112024/241127_054424/0000/HiForestMiniAOD_2024Run3_HYD2024_PFcand_27112024_out_combined.root","READ");
+  TFile inputMCfile("/eos/cms/store/group/phys_heavyions/nsaha/GO2024/2024PbPbRun3/forest_2024Run3_HYD2024_PFcand_27112024/Hydjet2024_v2/HiForest_2024Run3_HYD2024_new_PFcand_27112024/241127_054424/0000/HiForestMiniAOD_2024Run3_HYD2024_PFcand_27112024_out_combined.root","READ"); //we need to produce 
 
 
   if (!inputMCfile.IsOpen()) throw std::logic_error("MC file was not found!");
@@ -306,7 +311,7 @@ void makeDataCentralityTable_NOMINAL(
     nt->Fill(v.first, v.second ? mcYscale : 1.);
     hfCombined->Fill(v.first, v.second ? mcYscale : 1.);
   }
-  const auto totEff = hfData1->Integral() / hfCombined->Integral();
+  const auto totEff = hfData1->Integral() / hfCombined->Integral(); //important value, always less than 1 
 
 
   const auto passed = values.size();
@@ -355,6 +360,7 @@ void makeDataCentralityTable_NOMINAL(
 	  currentbin++;
 	}
   }
+//output is 2 root files and 1 txt file, txt file has the bin boundaries
   std::cout << currentbin << std::endl;
   for(size_t i = 0; i < nbins; i++)
     txtfile << binboundaries[i] << ", ";
@@ -362,10 +368,14 @@ void makeDataCentralityTable_NOMINAL(
   txtfile << std::endl;
   txtfile<<"-------------------------------------"<<endl;
 
+  //takes cmssw code into my code and recalculates the hiBin dis with the HIHF dist
   txtfile<<"# Bin BinEdge"<<endl;
   for(int i = 0; i < nbins; i++){
     int ii = nbins-i;
     bins->table_[i].bin_edge = binboundaries[ii-1];
+    //takes the HiHF and makes it into the centrality
+    //HiBin and centrality is the same 
+    
 
     txtfile << i << " " << bins->table_[i].bin_edge << " " << endl;
   }
@@ -402,6 +412,8 @@ void makeDataCentralityTable_NOMINAL(
   // Check bin boundaries
   int newbin, oldbin;
   TFile outf(Form("compare_centralitybins_%s.root", outputTag.c_str()),"recreate");
+// two branches one with the new bin and one with the old bin 
+
   //TTree t1(Form("anaCentrality_%d", RUN),"analysis level centrality");
   //TTree t2(Form("anaCentrality_not%d", RUN),"analysis level centrality");
 
