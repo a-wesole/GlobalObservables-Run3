@@ -1,6 +1,19 @@
 //this code for a single run 
 // how to run root macro.C 
 // need cmssw 
+// output: 2 root files and one txt files 
+// txt file has lots of information in cluding number of events, weighted evetns, efficiency, x scle factor, and the -bin edges table- 
+//CentralityTable*root file: 'has all the histograms'
+// hfData1 run is after event selections 
+// hfMC is for mc after event selections 
+// hfCombined is hadd hfData + hfMC -->affects only the portion before the threshold, so only the first bin, only want to focus on 1000-4000 becuase that is where we normalize to
+//
+//compareCentrliay bins file: 'easy to understand'
+// oldBin is before the calibration 
+// newBin is after the calibration 'totally flat'
+
+
+
 #include "TFile.h"
 #include "TTree.h"
 #include "TNtuple.h"
@@ -111,6 +124,7 @@ void makeDataCentralityTable_NOMINAL(
   CentralityBins*bins = new CentralityBins(Form("run%d",runNum), tag, nbins);
   //CentralityBins * bins = new CentralityBins();
   bins->table_.reserve(nbins);
+  //ask milan baout that line above 
 
 
  //get the branches - modified by andre 
@@ -420,8 +434,10 @@ void makeDataCentralityTable_NOMINAL(
   TTree t1("anaCentrality","analysis level centrality");
   TTree t2("anaCentrality_","analysis level centrality");
   for (auto& t : {&t1, &t2}) {
-    t->Branch("newBin",&newbin,"newBin/I");
+    t->Branch("newBin",&newbin,"newBin/I"); 
+//new bin is the centrality bin 
     t->Branch("oldBin",&oldbin,"oldBin/I");
+//old bin is --------------------
   }
   for (size_t i=0; i<hfdata.size(); i++) {
     newbin = 199;
